@@ -416,6 +416,48 @@ server.tool(
   }
 );
 
+server.tool(
+  'local_risk_france_get_radon',
+  'Fetch official Géorisques v1 radon potential for a commune INSEE code. v1 endpoints are public without token.',
+  {
+    code_insee: z.string().regex(/^\d{5}$/).describe('Commune INSEE code.'),
+  },
+  async ({ code_insee }) => {
+    try {
+      const url = `https://www.georisques.gouv.fr/api/v1/radon?code_insee=${code_insee}`;
+      const data = await fetchJson<Record<string, unknown>>(url);
+      return jsonResult({
+        source: url,
+        code_insee,
+        result: data,
+      });
+    } catch (error) {
+      return errorResult(error instanceof Error ? error.message : 'Failed to fetch radon potential');
+    }
+  }
+);
+
+server.tool(
+  'local_risk_france_get_seismic_zoning',
+  'Fetch official Géorisques v1 seismic zoning for a commune INSEE code. v1 endpoints are public without token.',
+  {
+    code_insee: z.string().regex(/^\d{5}$/).describe('Commune INSEE code.'),
+  },
+  async ({ code_insee }) => {
+    try {
+      const url = `https://www.georisques.gouv.fr/api/v1/zonage_sismique?code_insee=${code_insee}`;
+      const data = await fetchJson<Record<string, unknown>>(url);
+      return jsonResult({
+        source: url,
+        code_insee,
+        result: data,
+      });
+    } catch (error) {
+      return errorResult(error instanceof Error ? error.message : 'Failed to fetch seismic zoning');
+    }
+  }
+);
+
 async function main(): Promise<void> {
   await server.connect(new StdioServerTransport());
   console.error(`${CONFIG.name} running on stdio`);

@@ -18,6 +18,8 @@ French commune-level risk intelligence using Géorisques, administrative referen
 - `local_risk_france_get_georisques_links`
 - `local_risk_france_search_risk_datasets`
 - `local_risk_france_commune_brief`
+- `local_risk_france_get_radon`
+- `local_risk_france_get_seismic_zoning`
 
 ## Install
 
