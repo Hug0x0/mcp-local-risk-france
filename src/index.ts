@@ -259,6 +259,163 @@ server.tool(
   })
 );
 
+server.tool(
+  'local_risk_france_find_commune',
+  'Resolve a French commune by name, INSEE code, or postal code using geo.api.gouv.fr. Useful before querying local risk sources.',
+  {
+    query: z.string().describe('Commune name, INSEE code, or postal code. Examples: "Saint-Denis", "97411", "75056".'),
+    limit: z.number().int().min(1).max(20).default(10).describe('Max communes to return.'),
+  },
+  async ({ query, limit }) => {
+    try {
+      const isCode = /^\d{5}$/.test(query);
+      const isPostalCode = /^\d{5}$/.test(query);
+      const url = new URL(isCode
+        ? `https://geo.api.gouv.fr/communes/${query}`
+        : 'https://geo.api.gouv.fr/communes');
+      if (!isCode) {
+        url.searchParams.set(isPostalCode ? 'codePostal' : 'nom', query);
+        url.searchParams.set('boost', 'population');
+        url.searchParams.set('limit', String(limit));
+      }
+      url.searchParams.set('fields', 'nom,code,codesPostaux,departement,region,population,centre');
+      url.searchParams.set('format', 'json');
+      const data = await fetchJson<Record<string, unknown> | Array<Record<string, unknown>>>(url.toString());
+      const communes = Array.isArray(data) ? data : [data];
+      return jsonResult({
+        query,
+        count: communes.length,
+        communes: communes.map((commune) => ({
+          name: commune.nom,
+          code: commune.code,
+          postal_codes: commune.codesPostaux,
+          department: commune.departement,
+          region: commune.region,
+          population: commune.population,
+          center: commune.centre,
+        })),
+      });
+    } catch (error) {
+      return errorResult(error instanceof Error ? error.message : 'Failed to resolve commune');
+    }
+  }
+);
+
+server.tool(
+  'local_risk_france_get_georisques_links',
+  'Build official Géorisques and related public links for one commune INSEE code. These links are suitable for authoritative risk review.',
+  {
+    code_insee: z.string().regex(/^\d{5}$/).describe('Commune INSEE code, e.g. 97411, 75056, 13055.'),
+  },
+  async ({ code_insee }) => jsonResult({
+    code_insee,
+    official_links: [
+      {
+        title: 'Géorisques search for commune',
+        url: `https://www.georisques.gouv.fr/recherche?search=${code_insee}`,
+      },
+      {
+        title: 'Géorisques API documentation',
+        url: 'https://www.georisques.gouv.fr/doc-api',
+      },
+      {
+        title: 'data.gouv.fr API Géorisques listing',
+        url: 'https://www.data.gouv.fr/dataservices/api-georisques',
+      },
+      {
+        title: 'geo.api.gouv.fr commune record',
+        url: `https://geo.api.gouv.fr/communes/${code_insee}?fields=nom,code,codesPostaux,departement,region,population,centre&format=json`,
+      },
+    ],
+    risk_topics_to_check: [
+      'natural hazards: flood, ground movement, seismicity, cyclonic/wind where relevant',
+      'technological hazards: industrial sites, nuclear, pipelines, dams where relevant',
+      'planning documents: PPRN/PPRT, historical disaster decrees, local prevention plans',
+      'soil and pollution: BASOL/BASIAS/SIS where available',
+    ],
+  })
+);
+
+server.tool(
+  'local_risk_france_search_risk_datasets',
+  'Search data.gouv.fr for local-risk datasets, combining a risk topic and optional commune/departement context.',
+  {
+    topic: z.string().default('géorisques risques naturels').describe('Risk topic, e.g. "inondation", "PPR", "mouvements de terrain", "ICPE", "argiles".'),
+    place: z.string().optional().describe('Optional place name/code added to the search, e.g. "974", "Saint-Denis".'),
+    page_size: z.number().int().min(1).max(50).default(10).describe('Number of datasets to return.'),
+  },
+  async ({ topic, place, page_size }) => {
+    try {
+      const query = place ? `${topic} ${place}` : topic;
+      const url = new URL('https://www.data.gouv.fr/api/1/datasets/');
+      url.searchParams.set('q', query);
+      url.searchParams.set('page_size', String(page_size));
+      const data = await fetchJson<{ data?: Array<Record<string, unknown>>; total?: number }>(url.toString());
+      return jsonResult({
+        query,
+        total: data.total,
+        datasets: (data.data ?? []).map((dataset) => ({
+          id: dataset.id,
+          slug: dataset.slug,
+          title: dataset.title,
+          page: dataset.page,
+          organization: dataset.organization && typeof dataset.organization === 'object'
+            ? (dataset.organization as Record<string, unknown>).name
+            : undefined,
+        })),
+      });
+    } catch (error) {
+      return errorResult(error instanceof Error ? error.message : 'Failed to search risk datasets');
+    }
+  }
+);
+
+server.tool(
+  'local_risk_france_commune_brief',
+  'Create a source-oriented local-risk brief for a commune: geo.api identity, Géorisques links, and data.gouv search queries to run next.',
+  {
+    code_insee: z.string().regex(/^\d{5}$/).describe('Commune INSEE code.'),
+  },
+  async ({ code_insee }) => {
+    try {
+      const communeUrl = `https://geo.api.gouv.fr/communes/${code_insee}?fields=nom,code,codesPostaux,departement,region,population,centre&format=json`;
+      const commune = await fetchJson<Record<string, unknown>>(communeUrl);
+      return jsonResult({
+        commune: {
+          name: commune.nom,
+          code: commune.code,
+          postal_codes: commune.codesPostaux,
+          department: commune.departement,
+          region: commune.region,
+          population: commune.population,
+          center: commune.centre,
+        },
+        next_checks: [
+          {
+            topic: 'Official Géorisques commune search',
+            url: `https://www.georisques.gouv.fr/recherche?search=${code_insee}`,
+          },
+          {
+            topic: 'Risk datasets on data.gouv.fr',
+            query: `géorisques ${commune.nom}`,
+          },
+          {
+            topic: 'Planning prevention datasets',
+            query: `PPR ${commune.nom}`,
+          },
+          {
+            topic: 'Industrial and polluted-sites datasets',
+            query: `ICPE BASOL BASIAS ${commune.nom}`,
+          },
+        ],
+        disclaimer: 'This brief orients source discovery. It is not a legal risk statement or emergency advice.',
+      });
+    } catch (error) {
+      return errorResult(error instanceof Error ? error.message : 'Failed to build commune risk brief');
+    }
+  }
+);
+
 async function main(): Promise<void> {
   await server.connect(new StdioServerTransport());
   console.error(`${CONFIG.name} running on stdio`);

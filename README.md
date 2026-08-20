@@ -14,6 +14,10 @@ French commune-level risk intelligence using Géorisques, administrative referen
 - `local_risk_france_fetch_source_excerpt`
 - `local_risk_france_explain_scope`
 - `local_risk_france_list_reference_items`
+- `local_risk_france_find_commune`
+- `local_risk_france_get_georisques_links`
+- `local_risk_france_search_risk_datasets`
+- `local_risk_france_commune_brief`
 
 ## Install
 
