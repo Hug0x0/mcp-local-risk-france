@@ -458,6 +458,51 @@ server.tool(
   }
 );
 
+server.tool(
+  'local_risk_france_address_brief',
+  'Resolve an address with BAN, then build a source-oriented local-risk brief for the matched commune.',
+  {
+    address: z.string().describe('French address or place query.'),
+  },
+  async ({ address }) => {
+    try {
+      const geocodeUrl = new URL('https://api-adresse.data.gouv.fr/search/');
+      geocodeUrl.searchParams.set('q', address);
+      geocodeUrl.searchParams.set('limit', '1');
+      const geocode = await fetchJson<{ features?: Array<Record<string, unknown>> }>(geocodeUrl.toString());
+      const feature = geocode.features?.[0];
+      const properties = feature?.properties && typeof feature.properties === 'object'
+        ? feature.properties as Record<string, unknown>
+        : undefined;
+      const codeInsee = properties?.citycode;
+      if (typeof codeInsee !== 'string') {
+        return errorResult('Address could not be resolved to a commune code');
+      }
+      const communeUrl = `https://geo.api.gouv.fr/communes/${codeInsee}?fields=nom,code,codesPostaux,departement,region,population,centre&format=json`;
+      const commune = await fetchJson<Record<string, unknown>>(communeUrl);
+      return jsonResult({
+        address,
+        geocode_match: {
+          label: properties?.label,
+          score: properties?.score,
+          type: properties?.type,
+          geometry: feature?.geometry,
+        },
+        commune,
+        official_links: [
+          { title: 'Géorisques commune search', url: `https://www.georisques.gouv.fr/recherche?search=${codeInsee}` },
+          { title: 'Radon potential API', url: `https://www.georisques.gouv.fr/api/v1/radon?code_insee=${codeInsee}` },
+          { title: 'Seismic zoning API', url: `https://www.georisques.gouv.fr/api/v1/zonage_sismique?code_insee=${codeInsee}` },
+        ],
+        next_queries: [`PPR ${commune.nom}`, `ICPE ${commune.nom}`, `argiles ${commune.nom}`, `inondation ${commune.nom}`],
+        disclaimer: 'This is a source-discovery brief, not an official risk certificate, legal assessment, or emergency instruction.',
+      });
+    } catch (error) {
+      return errorResult(error instanceof Error ? error.message : 'Failed to build address risk brief');
+    }
+  }
+);
+
 async function main(): Promise<void> {
   await server.connect(new StdioServerTransport());
   console.error(`${CONFIG.name} running on stdio`);
